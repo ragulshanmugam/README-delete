@@ -116,6 +116,225 @@
 
 ---
 
+### 1.3 Ticker Universe
+
+The system supports a curated universe of liquid ETFs and mega-cap stocks, organized into tiers:
+
+#### Tier 1: Index ETFs (Core - Always Active)
+
+| Symbol | Name | Avg Daily Volume | Options Liquidity | Notes |
+|--------|------|------------------|-------------------|-------|
+| **SPY** | S&P 500 ETF | ~80M shares | Extremely High | Primary trading instrument |
+| **QQQ** | Nasdaq 100 ETF | ~50M shares | Extremely High | Tech-heavy, higher beta |
+| **IWM** | Russell 2000 ETF | ~25M shares | High | Small caps, higher volatility |
+| **DIA** | Dow Jones ETF | ~3M shares | Medium | Blue chips, lower volatility |
+
+**Characteristics:**
+- No earnings risk (ETFs don't report earnings)
+- Highly correlated with broad market
+- Excellent options liquidity (tight spreads)
+- Trade all year without earnings blackouts
+
+#### Tier 2: Mega Caps (Expanded Universe)
+
+| Symbol | Name | Sector | Earnings Months | Avg IV |
+|--------|------|--------|-----------------|--------|
+| **AAPL** | Apple | Technology | Jan, Apr, Jul, Oct | ~25% |
+| **MSFT** | Microsoft | Technology | Jan, Apr, Jul, Oct | ~22% |
+| **GOOGL** | Alphabet | Technology | Jan, Apr, Jul, Oct | ~28% |
+| **AMZN** | Amazon | Consumer/Tech | Jan, Apr, Jul, Oct | ~30% |
+| **NVDA** | NVIDIA | Semiconductors | Feb, May, Aug, Nov | ~45% |
+| **TSLA** | Tesla | Automotive/Tech | Jan, Apr, Jul, Oct | ~55% |
+| **META** | Meta Platforms | Technology | Jan, Apr, Jul, Oct | ~35% |
+| **NFLX** | Netflix | Entertainment | Jan, Apr, Jul, Oct | ~40% |
+
+**Characteristics:**
+- Higher IV than ETFs (more premium to sell)
+- Earnings 4x per year (requires special handling)
+- Individual stock risk (news, events)
+- Good options liquidity on all symbols
+
+#### Tier 3: Sector ETFs (Optional Expansion)
+
+| Symbol | Name | Sector | Use Case |
+|--------|------|--------|----------|
+| **XLF** | Financial Select | Financials | Bank earnings plays |
+| **XLE** | Energy Select | Energy | Oil volatility plays |
+| **XLK** | Technology Select | Technology | Sector rotation |
+| **XLV** | Healthcare Select | Healthcare | Defensive plays |
+
+#### Ticker Configuration
+
+```yaml
+# configs/tickers.yaml
+ticker_universe:
+  tier_1_etfs:
+    - symbol: SPY
+      name: "S&P 500 ETF"
+      type: etf
+      always_active: true
+      min_dte: 3
+      max_dte: 45
+
+    - symbol: QQQ
+      name: "Nasdaq 100 ETF"
+      type: etf
+      always_active: true
+      min_dte: 3
+      max_dte: 45
+
+    - symbol: IWM
+      name: "Russell 2000 ETF"
+      type: etf
+      always_active: true
+      min_dte: 3
+      max_dte: 45
+
+  tier_2_mega_caps:
+    - symbol: AAPL
+      name: "Apple Inc"
+      type: stock
+      sector: technology
+      earnings_months: [1, 4, 7, 10]
+      earnings_blackout_days: 5  # Days before earnings to stop core model
+
+    - symbol: MSFT
+      name: "Microsoft Corp"
+      type: stock
+      sector: technology
+      earnings_months: [1, 4, 7, 10]
+      earnings_blackout_days: 5
+
+    - symbol: GOOGL
+      name: "Alphabet Inc"
+      type: stock
+      sector: technology
+      earnings_months: [1, 4, 7, 10]
+      earnings_blackout_days: 5
+
+    - symbol: AMZN
+      name: "Amazon.com"
+      type: stock
+      sector: consumer
+      earnings_months: [1, 4, 7, 10]
+      earnings_blackout_days: 5
+
+    - symbol: NVDA
+      name: "NVIDIA Corp"
+      type: stock
+      sector: semiconductors
+      earnings_months: [2, 5, 8, 11]
+      earnings_blackout_days: 5
+
+    - symbol: TSLA
+      name: "Tesla Inc"
+      type: stock
+      sector: automotive
+      earnings_months: [1, 4, 7, 10]
+      earnings_blackout_days: 5
+
+    - symbol: META
+      name: "Meta Platforms"
+      type: stock
+      sector: technology
+      earnings_months: [1, 4, 7, 10]
+      earnings_blackout_days: 5
+
+    - symbol: NFLX
+      name: "Netflix Inc"
+      type: stock
+      sector: entertainment
+      earnings_months: [1, 4, 7, 10]
+      earnings_blackout_days: 5
+```
+
+#### Ticker Selection Logic
+
+```python
+class TickerManager:
+    """Manages ticker universe and determines which model to use"""
+
+    def __init__(self, config_path: str):
+        self.config = self._load_config(config_path)
+        self.earnings_calendar = EarningsCalendar()
+
+    def get_active_tickers(self, date: date) -> Dict[str, TickerContext]:
+        """
+        Get all active tickers and their trading context
+
+        Returns:
+            Dict mapping symbol to TickerContext with:
+            - model_type: 'core' or 'earnings'
+            - days_to_earnings: int or None
+            - is_blackout: bool
+        """
+        active = {}
+
+        # Tier 1 ETFs: Always use core model
+        for etf in self.config['tier_1_etfs']:
+            active[etf['symbol']] = TickerContext(
+                symbol=etf['symbol'],
+                model_type='core',
+                days_to_earnings=None,
+                is_blackout=False,
+                is_etf=True
+            )
+
+        # Tier 2 Mega Caps: Check earnings proximity
+        for stock in self.config['tier_2_mega_caps']:
+            days_to_earnings = self.earnings_calendar.days_until_earnings(
+                stock['symbol'], date
+            )
+
+            if days_to_earnings is not None and days_to_earnings <= 5:
+                # Earnings window: Use earnings model
+                active[stock['symbol']] = TickerContext(
+                    symbol=stock['symbol'],
+                    model_type='earnings',
+                    days_to_earnings=days_to_earnings,
+                    is_blackout=False,
+                    is_etf=False
+                )
+            elif days_to_earnings is not None and days_to_earnings <= stock['earnings_blackout_days']:
+                # Blackout period: Skip core model, wait for earnings model
+                active[stock['symbol']] = TickerContext(
+                    symbol=stock['symbol'],
+                    model_type='blackout',
+                    days_to_earnings=days_to_earnings,
+                    is_blackout=True,
+                    is_etf=False
+                )
+            else:
+                # Normal period: Use core model
+                active[stock['symbol']] = TickerContext(
+                    symbol=stock['symbol'],
+                    model_type='core',
+                    days_to_earnings=days_to_earnings,
+                    is_blackout=False,
+                    is_etf=False
+                )
+
+        return active
+```
+
+#### Phased Rollout Plan
+
+```
+Phase 1 (Weeks 1-4):   SPY only
+                       └── Build and validate core pipeline
+
+Phase 2 (Weeks 5-8):   SPY + QQQ + IWM
+                       └── Validate multi-ticker with similar instruments
+
+Phase 3 (Weeks 9-12):  Add mega caps (exclude earnings windows)
+                       └── AAPL, MSFT, GOOGL, AMZN, NVDA, TSLA
+
+Phase 4 (Weeks 13-16): Add earnings model
+                       └── Enable earnings plays on mega caps
+```
+
+---
+
 ## 2. Component Architecture
 
 ### 2.1 Data Layer
@@ -619,39 +838,352 @@ class FeatureEngineer:
 
 ### 2.3 Model Layer
 
-#### 2.3.1 Model Architecture
+#### 2.3.1 Two-Model Architecture
 
-**Multi-Model Ensemble:**
+The system uses **two separate models** optimized for different market conditions:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                  Model Ensemble                          │
-│                                                           │
-│  ┌───────────┐  ┌───────────┐  ┌───────────┐          │
-│  │ XGBoost   │  │   LSTM    │  │  Linear   │          │
-│  │  Model    │  │   Model   │  │   Model   │          │
-│  │           │  │           │  │(Baseline) │          │
-│  │ Predicts: │  │ Predicts: │  │ Predicts: │          │
-│  │ Option    │  │ Time-     │  │ Quick     │          │
-│  │ Returns   │  │ Series    │  │ Baseline  │          │
-│  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘          │
-│        │              │              │                  │
-│        └──────────────┼──────────────┘                  │
-│                       ▼                                  │
-│              ┌─────────────────┐                        │
-│              │ Ensemble Logic  │                        │
-│              │ - Weight by     │                        │
-│              │   regime        │                        │
-│              │ - Confidence    │                        │
-│              │   thresholds    │                        │
-│              └────────┬────────┘                        │
-│                       ▼                                  │
-│              ┌─────────────────┐                        │
-│              │ Final Prediction│                        │
-│              │ + Confidence    │                        │
-│              └─────────────────┘                        │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         TWO-MODEL ARCHITECTURE                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────┐    ┌──────────────────────────────────┐
+│         CORE MODEL               │    │       EARNINGS MODEL             │
+│    (IV Rank Mean Reversion)      │    │     (IV Crush Strategy)          │
+├──────────────────────────────────┤    ├──────────────────────────────────┤
+│                                  │    │                                  │
+│  Tickers:                        │    │  Tickers:                        │
+│  • SPY, QQQ, IWM, DIA (ETFs)    │    │  • AAPL, MSFT, GOOGL, AMZN      │
+│  • Mega caps (non-earnings)      │    │  • NVDA, TSLA, META, NFLX       │
+│                                  │    │  • Only during earnings window   │
+│  Training Data:                  │    │                                  │
+│  • All days EXCEPT 5 days        │    │  Training Data:                  │
+│    before earnings               │    │  • Only earnings windows         │
+│  • ~1,200 days/ticker (5 years)  │    │  • ~20 events/ticker/year       │
+│                                  │    │  • ~800 events total (5 years)   │
+│  Strategy:                       │    │                                  │
+│  • IV rank mean reversion        │    │  Strategy:                       │
+│  • Sell premium when IV high     │    │  • Play IV crush post-earnings   │
+│  • 20-45 DTE options            │    │  • Straddles/strangles           │
+│  • Theta decay = profit          │    │  • 0-7 DTE options              │
+│                                  │    │  • IV collapse = profit          │
+│  ┌───────────┐  ┌───────────┐   │    │                                  │
+│  │ XGBoost   │  │   LSTM    │   │    │  ┌───────────────────────────┐  │
+│  │  Model    │  │   Model   │   │    │  │   Earnings XGBoost        │  │
+│  └─────┬─────┘  └─────┬─────┘   │    │  │   (Specialized Features)  │  │
+│        │              │          │    │  └─────────────┬─────────────┘  │
+│        └──────┬───────┘          │    │               │                 │
+│               ▼                  │    │               ▼                 │
+│      ┌─────────────────┐        │    │      ┌─────────────────┐        │
+│      │ Core Ensemble   │        │    │      │Earnings Prediction│       │
+│      │ Prediction      │        │    │      │ + Direction       │       │
+│      └─────────────────┘        │    │      └─────────────────┘        │
+│                                  │    │                                  │
+└──────────────────────────────────┘    └──────────────────────────────────┘
+              │                                        │
+              └────────────────┬───────────────────────┘
+                               ▼
+                    ┌─────────────────────┐
+                    │   Model Router      │
+                    │                     │
+                    │  if earnings_window:│
+                    │    → Earnings Model │
+                    │  else:              │
+                    │    → Core Model     │
+                    └─────────────────────┘
 ```
+
+#### 2.3.2 Core Model (Primary)
+
+**Purpose:** Predict option profitability for IV rank mean reversion strategy
+
+**Training Data:**
+- **Tickers:** SPY, QQQ, IWM + Mega caps (excluding earnings windows)
+- **Period:** 5 years of historical data
+- **Exclusions:** Remove 5 days before each earnings date for stocks
+- **Labels:** Binary (1 = profitable trade, 0 = unprofitable)
+
+**Features (185 normalized features):**
+```python
+core_features = [
+    # Normalized across all tickers
+    'iv_rank',              # 0-1 percentile for THIS ticker
+    'iv_percentile',        # 0-1 percentile vs 252-day history
+    'hv_iv_ratio',          # Realized vol / Implied vol
+    'moneyness',            # Strike / Spot (comparable across tickers)
+    'delta', 'gamma', 'theta', 'vega',  # Greeks (already normalized)
+    'dte',                  # Days to expiration
+
+    # Price momentum (relative)
+    'returns_5d', 'returns_20d', 'returns_60d',
+    'rsi_14', 'rsi_28',
+    'price_vs_sma20',       # (Price - SMA20) / SMA20
+
+    # Volume (relative)
+    'volume_ratio',         # Volume / 20-day avg volume
+    'oi_ratio',             # Open interest ratio
+
+    # Regime
+    'vix_level', 'vix_rank',
+    'regime_encoded',       # One-hot: low_vol, high_vol, etc.
+
+    # Ticker context
+    'is_etf',               # 1 for ETFs, 0 for stocks
+    'sector_encoded',       # One-hot: tech, consumer, etc.
+    'avg_iv_percentile',    # Ticker's typical IV level
+]
+```
+
+**Model Architecture:**
+```python
+class CoreModel:
+    """
+    Pooled model trained on all tickers (excluding earnings windows)
+    Uses normalized features so patterns generalize across tickers
+    """
+
+    def __init__(self):
+        self.xgboost = XGBClassifier(
+            n_estimators=200,
+            max_depth=5,
+            learning_rate=0.05,
+            colsample_bytree=0.8,
+            subsample=0.8
+        )
+        self.lstm = LSTMModel(
+            sequence_length=60,
+            features=50,
+            hidden_units=[128, 64]
+        )
+        self.ensemble_weights = {'xgboost': 0.6, 'lstm': 0.4}
+
+    def train(self, X: pd.DataFrame, y: pd.Series):
+        """Train on pooled data from all tickers"""
+        # XGBoost on tabular features
+        self.xgboost.fit(X, y)
+
+        # LSTM on sequential data
+        X_seq = self._create_sequences(X)
+        self.lstm.fit(X_seq, y)
+
+    def predict(self, features: pd.DataFrame) -> float:
+        """Ensemble prediction"""
+        xgb_pred = self.xgboost.predict_proba(features)[:, 1]
+        lstm_pred = self.lstm.predict(self._create_sequences(features))
+
+        return (
+            self.ensemble_weights['xgboost'] * xgb_pred +
+            self.ensemble_weights['lstm'] * lstm_pred
+        )
+```
+
+#### 2.3.3 Earnings Model (Specialized)
+
+**Purpose:** Predict post-earnings price movement and IV crush profitability
+
+**Training Data:**
+- **Tickers:** AAPL, MSFT, GOOGL, AMZN, NVDA, TSLA, META, NFLX
+- **Period:** 5 years × 4 earnings/year × 8 stocks = ~160 events
+- **Window:** 5 days before earnings through 2 days after
+- **Labels:** Binary (1 = profitable IV crush play, 0 = unprofitable)
+
+**Features (Earnings-Specific):**
+```python
+earnings_features = [
+    # IV Context (relative to past earnings)
+    'iv_vs_past_earnings_avg',      # Current IV / Avg IV at past 8 earnings
+    'iv_percentile_earnings',       # Where is IV vs last 8 earnings?
+    'iv_crush_expected',            # Typical IV drop post-earnings (%)
+
+    # Expected Move
+    'expected_move_pct',            # Straddle price / Stock price
+    'expected_move_vs_historical',  # Expected move vs actual historical moves
+    'straddle_price',               # ATM straddle cost
+
+    # Historical Earnings Behavior
+    'historical_move_avg',          # Avg absolute move last 8 earnings
+    'historical_move_std',          # Volatility of moves
+    'beat_rate_last_4',             # How often does company beat?
+    'surprise_magnitude_avg',       # Avg earnings surprise %
+
+    # Price Context
+    'price_vs_52w_high',            # Distance from 52-week high
+    'returns_into_earnings',        # 5-day return leading into earnings
+    'gap_fill_tendency',            # Does stock tend to gap and fill?
+
+    # Market Context
+    'vix_level',
+    'sector_earnings_sentiment',    # How did sector peers do this quarter?
+
+    # Timing
+    'days_to_earnings',             # 5, 4, 3, 2, 1, 0
+    'is_after_hours',               # Does this company report after hours?
+    'is_pre_market',                # Or pre-market?
+]
+```
+
+**Model Architecture:**
+```python
+class EarningsModel:
+    """
+    Specialized model for earnings plays
+    Trained only on earnings windows
+    """
+
+    def __init__(self):
+        self.model = XGBClassifier(
+            n_estimators=100,  # Less data, simpler model
+            max_depth=4,
+            learning_rate=0.1
+        )
+
+    def train(self, earnings_data: pd.DataFrame):
+        """
+        Train on earnings events only
+
+        Data structure:
+        - Each row is one earnings event
+        - Features calculated 1-5 days before earnings
+        - Label is whether IV crush play was profitable
+        """
+        X = earnings_data[earnings_features]
+        y = earnings_data['profitable']
+
+        self.model.fit(X, y)
+
+    def predict(self, features: pd.DataFrame) -> Dict:
+        """
+        Predict earnings play profitability
+
+        Returns:
+            - probability: Chance of profitable IV crush
+            - suggested_strategy: 'sell_straddle', 'sell_strangle', 'skip'
+            - confidence: Model confidence
+        """
+        prob = self.model.predict_proba(features)[:, 1][0]
+
+        if prob > 0.7:
+            strategy = 'sell_straddle'  # High confidence: aggressive
+        elif prob > 0.55:
+            strategy = 'sell_strangle'  # Medium confidence: wider strikes
+        else:
+            strategy = 'skip'  # Low confidence: don't trade
+
+        return {
+            'probability': prob,
+            'suggested_strategy': strategy,
+            'confidence': abs(prob - 0.5) * 2  # 0-1 scale
+        }
+```
+
+#### 2.3.4 Model Router
+
+```python
+class ModelRouter:
+    """Routes predictions to appropriate model based on context"""
+
+    def __init__(self, core_model: CoreModel, earnings_model: EarningsModel):
+        self.core_model = core_model
+        self.earnings_model = earnings_model
+        self.ticker_manager = TickerManager('configs/tickers.yaml')
+
+    def get_prediction(
+        self,
+        symbol: str,
+        features: pd.DataFrame,
+        date: date
+    ) -> ModelPrediction:
+        """
+        Route to appropriate model based on earnings proximity
+
+        Returns:
+            ModelPrediction with model_type, prediction, confidence
+        """
+        context = self.ticker_manager.get_active_tickers(date).get(symbol)
+
+        if context is None:
+            raise ValueError(f"Symbol {symbol} not in universe")
+
+        if context.is_blackout:
+            # In blackout period - don't trade
+            return ModelPrediction(
+                model_type='blackout',
+                prediction=0.0,
+                confidence=0.0,
+                should_trade=False,
+                reason='Earnings blackout period'
+            )
+
+        if context.model_type == 'earnings':
+            # Use earnings model
+            result = self.earnings_model.predict(features)
+            return ModelPrediction(
+                model_type='earnings',
+                prediction=result['probability'],
+                confidence=result['confidence'],
+                should_trade=result['suggested_strategy'] != 'skip',
+                strategy=result['suggested_strategy'],
+                days_to_earnings=context.days_to_earnings
+            )
+
+        else:
+            # Use core model
+            prediction = self.core_model.predict(features)
+            confidence = abs(prediction - 0.5) * 2
+
+            return ModelPrediction(
+                model_type='core',
+                prediction=prediction,
+                confidence=confidence,
+                should_trade=confidence > 0.3,  # Minimum confidence threshold
+                strategy='iv_rank'
+            )
+```
+
+#### 2.3.5 Training Data Preparation
+
+```python
+def prepare_training_data(symbols: List[str], start_date: date, end_date: date):
+    """
+    Prepare separate datasets for Core and Earnings models
+
+    Returns:
+        core_data: DataFrame for core model (excludes earnings windows)
+        earnings_data: DataFrame for earnings model (only earnings windows)
+    """
+    earnings_calendar = EarningsCalendar()
+    core_data = []
+    earnings_data = []
+
+    for symbol in symbols:
+        # Load all data for symbol
+        data = load_features(symbol, start_date, end_date)
+
+        # Get earnings dates
+        earnings_dates = earnings_calendar.get_earnings_dates(symbol, start_date, end_date)
+
+        for idx, row in data.iterrows():
+            current_date = row['date']
+
+            # Find days to nearest earnings
+            days_to_earnings = min(
+                [(ed - current_date).days for ed in earnings_dates if ed >= current_date],
+                default=999
+            )
+
+            if days_to_earnings <= 5:
+                # Earnings window → Earnings dataset
+                row['days_to_earnings'] = days_to_earnings
+                earnings_data.append(row)
+            elif days_to_earnings > 5:
+                # Normal period → Core dataset
+                core_data.append(row)
+            # Skip blackout period (days 6-10 before earnings) for cleaner data
+
+    return pd.DataFrame(core_data), pd.DataFrame(earnings_data)
+```
+
+#### 2.3.6 Multi-Model Ensemble (Within Core Model)
 
 **XGBoost Model:**
 - **Task:** Predict option profitability (binary) or return (regression)
@@ -1048,6 +1580,311 @@ class IVRankStrategy(BaseStrategy):
             return True
 
         return False
+```
+
+---
+
+#### 2.4.3 Earnings Strategy (Specialized)
+
+```python
+class EarningsStrategy(BaseStrategy):
+    """
+    Strategy for playing IV crush around earnings announcements
+
+    Logic:
+    - 1-5 days before earnings: Sell straddles/strangles to capture IV crush
+    - Uses Earnings Model predictions for entry decisions
+    - Exits immediately after earnings announcement
+    """
+
+    def __init__(self, config: EarningsStrategyConfig):
+        self.min_iv_percentile = config.min_iv_percentile  # 0.6
+        self.max_expected_move = config.max_expected_move  # 0.10 (10%)
+        self.strangle_width = config.strangle_width  # 0.05 (5% OTM each side)
+        self.max_dte = config.max_dte  # 7 days
+        self.earnings_model = None  # Injected
+
+    def generate_signal(
+        self,
+        market_data: Dict,
+        options_chain: pd.DataFrame,
+        features: pd.DataFrame,
+        model_predictions: Optional[Dict] = None
+    ) -> Optional[Signal]:
+        """Generate earnings play signal"""
+
+        days_to_earnings = market_data.get('days_to_earnings')
+
+        # Only trade 1-5 days before earnings
+        if days_to_earnings is None or days_to_earnings > 5 or days_to_earnings < 1:
+            return None
+
+        # Check model prediction
+        if model_predictions is None:
+            return None
+
+        if model_predictions.get('suggested_strategy') == 'skip':
+            return None
+
+        # Get spot price and expected move
+        spot = market_data['spot_price']
+        expected_move = market_data.get('expected_move_pct', 0.05)
+
+        # Find options expiring just after earnings
+        earnings_date = market_data['earnings_date']
+        valid_options = options_chain[
+            (options_chain['expiration'] > earnings_date) &
+            (options_chain['dte'] <= self.max_dte)
+        ]
+
+        if len(valid_options) == 0:
+            return None
+
+        strategy_type = model_predictions.get('suggested_strategy', 'sell_strangle')
+
+        if strategy_type == 'sell_straddle':
+            return self._create_straddle_signal(
+                valid_options, spot, market_data, model_predictions
+            )
+        else:  # sell_strangle
+            return self._create_strangle_signal(
+                valid_options, spot, market_data, model_predictions
+            )
+
+    def _create_strangle_signal(
+        self,
+        options: pd.DataFrame,
+        spot: float,
+        market_data: Dict,
+        model_predictions: Dict
+    ) -> Optional[Signal]:
+        """Create short strangle signal (sell OTM call + OTM put)"""
+
+        # Find OTM strikes
+        call_strike = spot * (1 + self.strangle_width)
+        put_strike = spot * (1 - self.strangle_width)
+
+        # Round to nearest strike
+        available_strikes = options['strike'].unique()
+        call_strike = min(available_strikes, key=lambda x: abs(x - call_strike))
+        put_strike = min(available_strikes, key=lambda x: abs(x - put_strike))
+
+        # Get options at these strikes
+        sell_call = options[
+            (options['strike'] == call_strike) &
+            (options['option_type'] == 'call')
+        ]
+        sell_put = options[
+            (options['strike'] == put_strike) &
+            (options['option_type'] == 'put')
+        ]
+
+        if len(sell_call) == 0 or len(sell_put) == 0:
+            return None
+
+        sell_call = sell_call.iloc[0]
+        sell_put = sell_put.iloc[0]
+
+        # Calculate credit (conservative: use bids)
+        credit = sell_call['bid'] + sell_put['bid']
+
+        if credit <= 0:
+            return None
+
+        # Max risk is theoretically unlimited for naked strangle
+        # Use expected move to estimate practical max risk
+        expected_move_dollars = spot * market_data.get('expected_move_pct', 0.05)
+        max_risk = expected_move_dollars * 2  # Rough estimate
+
+        return Signal(
+            timestamp=datetime.now(),
+            strategy='earnings_strangle',
+            action='sell_strangle',
+            symbol=market_data['symbol'],
+            sell_strike=call_strike,  # Call strike
+            buy_strike=put_strike,    # Put strike (overloaded field)
+            expiration=sell_call['expiration'],
+            dte=sell_call['dte'],
+            credit_or_debit=credit,
+            max_profit=credit,
+            max_risk=max_risk,
+            confidence=model_predictions.get('confidence', 0.5),
+            regime=market_data.get('regime', 'neutral'),
+            iv_rank=market_data.get('iv_rank', 0.5),
+            features={
+                'days_to_earnings': market_data['days_to_earnings'],
+                'expected_move_pct': market_data.get('expected_move_pct'),
+                'iv_percentile_earnings': market_data.get('iv_percentile_earnings'),
+                'call_iv': sell_call.get('impliedVolatility'),
+                'put_iv': sell_put.get('impliedVolatility')
+            },
+            model_predictions=model_predictions,
+            metadata={'strategy_subtype': 'strangle'}
+        )
+
+    def _create_straddle_signal(
+        self,
+        options: pd.DataFrame,
+        spot: float,
+        market_data: Dict,
+        model_predictions: Dict
+    ) -> Optional[Signal]:
+        """Create short straddle signal (sell ATM call + ATM put)"""
+
+        # Find ATM strike
+        available_strikes = options['strike'].unique()
+        atm_strike = min(available_strikes, key=lambda x: abs(x - spot))
+
+        # Get ATM options
+        sell_call = options[
+            (options['strike'] == atm_strike) &
+            (options['option_type'] == 'call')
+        ]
+        sell_put = options[
+            (options['strike'] == atm_strike) &
+            (options['option_type'] == 'put')
+        ]
+
+        if len(sell_call) == 0 or len(sell_put) == 0:
+            return None
+
+        sell_call = sell_call.iloc[0]
+        sell_put = sell_put.iloc[0]
+
+        credit = sell_call['bid'] + sell_put['bid']
+
+        if credit <= 0:
+            return None
+
+        return Signal(
+            timestamp=datetime.now(),
+            strategy='earnings_straddle',
+            action='sell_straddle',
+            symbol=market_data['symbol'],
+            sell_strike=atm_strike,
+            buy_strike=atm_strike,  # Same strike for straddle
+            expiration=sell_call['expiration'],
+            dte=sell_call['dte'],
+            credit_or_debit=credit,
+            max_profit=credit,
+            max_risk=credit * 3,  # Rough risk estimate
+            confidence=model_predictions.get('confidence', 0.5),
+            regime=market_data.get('regime', 'neutral'),
+            iv_rank=market_data.get('iv_rank', 0.5),
+            features={
+                'days_to_earnings': market_data['days_to_earnings'],
+                'expected_move_pct': market_data.get('expected_move_pct'),
+                'straddle_price': credit
+            },
+            model_predictions=model_predictions,
+            metadata={'strategy_subtype': 'straddle'}
+        )
+
+    def should_close(self, position: Position, market_data: Dict) -> bool:
+        """
+        Earnings positions have specific exit rules
+
+        Exit conditions:
+        1. Immediately after earnings (IV crush captured)
+        2. Profit target hit (50% of credit)
+        3. Stock moves beyond expected move (cut losses)
+        """
+
+        # Exit after earnings announcement
+        if market_data.get('earnings_announced', False):
+            return True
+
+        # Profit target: 50% of max profit
+        if position.unrealized_pnl >= position.max_profit * 0.5:
+            return True
+
+        # Stop loss: Position doubled in value (losing 100% of credit)
+        if position.unrealized_pnl <= -position.credit_received:
+            return True
+
+        # Time-based: If still open 2 days after earnings, close
+        if position.metadata.get('earnings_date'):
+            days_since_earnings = (date.today() - position.metadata['earnings_date']).days
+            if days_since_earnings >= 2:
+                return True
+
+        return False
+```
+
+#### 2.4.4 Strategy Router
+
+```python
+class StrategyRouter:
+    """
+    Routes to appropriate strategy based on ticker context
+
+    Integrates with ModelRouter to select correct model + strategy combination
+    """
+
+    def __init__(
+        self,
+        core_strategy: IVRankStrategy,
+        earnings_strategy: EarningsStrategy,
+        model_router: ModelRouter
+    ):
+        self.core_strategy = core_strategy
+        self.earnings_strategy = earnings_strategy
+        self.model_router = model_router
+
+    def get_signals(
+        self,
+        symbols: List[str],
+        market_data: Dict[str, Dict],
+        options_chains: Dict[str, pd.DataFrame],
+        features: Dict[str, pd.DataFrame],
+        date: date
+    ) -> List[Signal]:
+        """
+        Generate signals for all symbols using appropriate strategy
+
+        Returns:
+            List of signals across all symbols
+        """
+        signals = []
+
+        for symbol in symbols:
+            # Get model prediction and routing
+            prediction = self.model_router.get_prediction(
+                symbol,
+                features.get(symbol),
+                date
+            )
+
+            if not prediction.should_trade:
+                continue
+
+            symbol_data = market_data.get(symbol, {})
+            symbol_data['model_predictions'] = {
+                'probability': prediction.prediction,
+                'confidence': prediction.confidence,
+                'suggested_strategy': prediction.strategy
+            }
+
+            # Route to appropriate strategy
+            if prediction.model_type == 'earnings':
+                signal = self.earnings_strategy.generate_signal(
+                    symbol_data,
+                    options_chains.get(symbol),
+                    features.get(symbol),
+                    symbol_data['model_predictions']
+                )
+            else:  # core
+                signal = self.core_strategy.generate_signal(
+                    symbol_data,
+                    options_chains.get(symbol),
+                    features.get(symbol),
+                    symbol_data['model_predictions']
+                )
+
+            if signal is not None:
+                signals.append(signal)
+
+        return signals
 ```
 
 ---
