@@ -1,0 +1,121 @@
+name: Daily Signal Generation
+
+on:
+  # Run at 6:30 AM ET (11:30 UTC) on weekdays
+  schedule:
+    - cron: '30 11 * * 1-5'
+
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: 'Tickers to analyze (comma-separated)'
+        required: false
+        default: 'SPY,QQQ,IWM'
+
+env:
+  FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+
+jobs:
+  generate-signals:
+    runs-on: ubuntu-latest
+
+    # Skip on US market holidays (basic check - can be expanded)
+    # This runs on weekdays only via cron, but markets may be closed
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check if US market is open today
+        id: market-check
+        run: |
+          python -c "
+          from datetime import datetime, date
+          import sys
+
+          # US Market holidays 2024-2025 (update annually)
+          HOLIDAYS = [
+              '2024-01-01', '2024-01-15', '2024-02-19', '2024-03-29',
+              '2024-05-27', '2024-06-19', '2024-07-04', '2024-09-02',
+              '2024-11-28', '2024-12-25',
+              '2025-01-01', '2025-01-20', '2025-02-17', '2025-04-18',
+              '2025-05-26', '2025-06-19', '2025-07-04', '2025-09-01',
+              '2025-11-27', '2025-12-25',
+          ]
+
+          today = date.today().isoformat()
+          if today in HOLIDAYS:
+              print('Market closed - holiday')
+              sys.exit(1)
+          print('Market open')
+          "
+        continue-on-error: true
+
+      - name: Fetch latest data
+        if: steps.market-check.outcome == 'success'
+        run: |
+          echo "Fetching latest price data..."
+          python scripts/fetch_data.py fetch-all --ticker SPY || true
+          python scripts/fetch_data.py fetch-all --ticker QQQ || true
+          python scripts/fetch_data.py fetch-all --ticker IWM || true
+
+      - name: Generate and record signals
+        if: steps.market-check.outcome == 'success'
+        run: |
+          TICKERS="${{ github.event.inputs.tickers || 'SPY,QQQ,IWM' }}"
+          echo "Generating signals for: $TICKERS"
+
+          python scripts/train_model.py signal-all \
+            --tickers "$TICKERS" \
+            --record
+
+      - name: Commit database changes
+        if: steps.market-check.outcome == 'success'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          # Add only the predictions database
+          git add data/predictions.db || true
+
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Daily signals: $(date +%Y-%m-%d)
+
+            Automated signal generation via GitHub Actions.
+
+            Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+
+            git push
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Daily Signal Generation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date +%Y-%m-%d)" >> $GITHUB_STEP_SUMMARY
+          echo "**Market Check:** ${{ steps.market-check.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f "data/predictions.db" ]; then
+            echo "### Recent Predictions" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            sqlite3 data/predictions.db "SELECT ticker, prediction_date, direction_pred, direction_prob, recommended_strategy FROM predictions ORDER BY created_at DESC LIMIT 6;" >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No predictions found" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi

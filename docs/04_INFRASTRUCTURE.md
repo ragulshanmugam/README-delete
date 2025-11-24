@@ -1,20 +1,108 @@
 # Adaptive Options Trading System - Infrastructure & Data Sources
 
-**Version:** 1.0
+**Version:** 1.1
 **Date:** 2025-11-21
 **Status:** Production Guide
+
+> **Note:** Docker setup has been implemented. See [Quick Start with Docker](#quick-start-with-docker) below.
 
 ---
 
 ## Table of Contents
 
-1. [Data Sources](#1-data-sources)
-2. [Training Infrastructure](#2-training-infrastructure)
-3. [Database Options](#3-database-options)
-4. [Deployment Architectures](#4-deployment-architectures)
-5. [Cost Analysis](#5-cost-analysis)
-6. [Setup Guides](#6-setup-guides)
-7. [Performance Optimization](#7-performance-optimization)
+1. [Quick Start with Docker](#quick-start-with-docker)
+2. [Data Sources](#1-data-sources)
+3. [Training Infrastructure](#2-training-infrastructure)
+4. [Database Options](#3-database-options)
+5. [Deployment Architectures](#4-deployment-architectures)
+6. [Cost Analysis](#5-cost-analysis)
+7. [Setup Guides](#6-setup-guides)
+8. [Performance Optimization](#7-performance-optimization)
+
+---
+
+## Quick Start with Docker
+
+The project includes a complete Docker setup for local development.
+
+### Prerequisites
+
+- Docker Desktop installed
+- Git
+
+### Getting Started
+
+```bash
+# Clone the repository
+git clone <repo-url>
+cd ml-options-trading
+
+# Copy environment file
+cp .env.example .env
+
+# Build and run
+docker-compose build
+docker-compose run app python scripts/fetch_data.py
+
+# With features
+docker-compose run app python scripts/fetch_data.py --with-features
+
+# Check data status
+docker-compose run app python scripts/fetch_data.py status
+```
+
+### Docker Commands Reference
+
+```bash
+# Build the Docker image
+docker-compose build
+
+# Fetch data (basic)
+docker-compose run app python scripts/fetch_data.py
+
+# Fetch data with features
+docker-compose run app python scripts/fetch_data.py --with-features
+
+# Fetch specific tickers
+docker-compose run app python scripts/fetch_data.py --tickers SPY QQQ
+
+# Fetch 3 years of data
+docker-compose run app python scripts/fetch_data.py --years 3
+
+# Run tests
+docker-compose run app pytest tests/
+
+# Start MLflow server (optional)
+docker-compose --profile mlflow up
+
+# Interactive shell
+docker-compose run app bash
+```
+
+### Project Structure
+
+```
+ml-options-trading/
+├── src/
+│   ├── config/settings.py      # Configuration
+│   ├── data/
+│   │   ├── yfinance_loader.py  # Data fetching
+│   │   └── feature_store.py    # Feature storage
+│   ├── features/
+│   │   └── technical_indicators.py
+│   ├── models/
+│   │   ├── direction_classifier.py
+│   │   ├── volatility_forecaster.py
+│   │   └── regime_classifier.py
+│   └── strategy/
+│       └── options_rules.py
+├── scripts/
+│   └── fetch_data.py           # CLI script
+├── data/                       # Data storage (gitignored)
+├── Dockerfile
+├── docker-compose.yml
+└── requirements.txt
+```
 
 ---
 

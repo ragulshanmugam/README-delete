@@ -1,9 +1,13 @@
 # Adaptive Options Trading System - Specification Document
 
-**Version:** 1.0
+**Version:** 1.1
 **Date:** 2025-11-21
-**Status:** Draft
+**Status:** Active Development
 **Owner:** Trading System Team
+
+> **Note:** This specification has been updated to reflect the Hybrid ML + Rule-Based approach.
+> See [05_IMPLEMENTATION_PLAN.md](./05_IMPLEMENTATION_PLAN.md) for detailed implementation timeline.
+> See [06_FUTURE_ROADMAP.md](./06_FUTURE_ROADMAP.md) for future features and roadmap.
 
 ---
 
@@ -58,20 +62,20 @@ Build an ML-powered options trading system that adapts to market regimes, genera
 - **FR-003.4:** Maintain regime history for analysis
 - **FR-003.5:** Support configurable regime thresholds
 
-#### FR-004: Strategy Engine
-- **FR-004.1:** Implement IV Rank mean reversion strategy (baseline)
-- **FR-004.2:** Generate signals: sell credit spreads (IV > 70%), buy debit spreads (IV < 30%)
+#### FR-004: Strategy Engine (Hybrid Approach)
+- **FR-004.1:** Implement rule-based options selection (strike, DTE, spread width)
+- **FR-004.2:** Generate signals based on ML predictions + regime rules
 - **FR-004.3:** Adapt strategy parameters based on regime
-- **FR-004.4:** Support multiple concurrent strategies
-- **FR-004.5:** Implement strategy selection based on regime and ML predictions
+- **FR-004.4:** Support credit spreads (high IV) and debit spreads (low IV)
+- **FR-004.5:** Implement strategy selection matrix: regime x direction -> strategy type
 
-#### FR-005: ML Models
-- **FR-005.1:** Train XGBoost models for option return prediction
-- **FR-005.2:** Train LSTM models for time-series pattern recognition
-- **FR-005.3:** Implement ensemble combining multiple models
-- **FR-005.4:** Support online learning with new data
+#### FR-005: ML Models (Two-Model Architecture)
+- **FR-005.1:** Train XGBoost direction classifier (bullish/bearish/neutral)
+- **FR-005.2:** Train XGBoost volatility forecaster (IV rank prediction)
+- **FR-005.3:** Implement rule-based regime classifier (VIX, HV/IV ratio)
+- **FR-005.4:** Support walk-forward validation for model training
 - **FR-005.5:** Track model performance metrics per regime
-- **FR-005.6:** Implement model versioning and A/B testing
+- **FR-005.6:** Implement model versioning with MLflow
 
 #### FR-006: Signal Generation
 - **FR-006.1:** Combine rule-based and ML signals
