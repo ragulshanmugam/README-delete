@@ -116,8 +116,18 @@ jobs:
               print('DRIFT_DETECTED=false')
           "
 
+      - name: Check if models exist
+        id: models-exist
+        run: |
+          if ls models/*.joblib 1>/dev/null 2>&1; then
+            echo "exist=true" >> $GITHUB_OUTPUT
+          else
+            echo "exist=false" >> $GITHUB_OUTPUT
+            echo "No models found - will train"
+          fi
+
       - name: Retrain models
-        if: github.event.inputs.force == 'true' || contains(steps.drift-check.outputs.*, 'DRIFT_DETECTED=true')
+        if: github.event.inputs.force == 'true' || steps.models-exist.outputs.exist == 'false' || contains(steps.drift-check.outputs.*, 'DRIFT_DETECTED=true')
         run: |
           TICKER="${{ github.event.inputs.ticker || 'ALL' }}"
 

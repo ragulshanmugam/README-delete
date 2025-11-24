@@ -72,8 +72,19 @@ jobs:
           python scripts/fetch_data.py fetch-all --ticker QQQ || true
           python scripts/fetch_data.py fetch-all --ticker IWM || true
 
-      - name: Generate and record signals
+      - name: Check if models exist
         if: steps.market-check.outcome == 'success'
+        id: models-check
+        run: |
+          if ls models/*.joblib 1>/dev/null 2>&1; then
+            echo "models_exist=true" >> $GITHUB_OUTPUT
+          else
+            echo "models_exist=false" >> $GITHUB_OUTPUT
+            echo "::warning::No trained models found. Run weekly-retrain workflow first."
+          fi
+
+      - name: Generate and record signals
+        if: steps.market-check.outcome == 'success' && steps.models-check.outputs.models_exist == 'true'
         run: |
           TICKERS="${{ github.event.inputs.tickers || 'SPY,QQQ,IWM' }}"
           echo "Generating signals for: $TICKERS"
