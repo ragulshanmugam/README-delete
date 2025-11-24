@@ -19,6 +19,7 @@ on:
 
 env:
   FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+  FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
 
 jobs:
   check-drift-and-retrain:
