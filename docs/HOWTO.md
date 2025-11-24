@@ -15,10 +15,17 @@
   # Required for sentiment & earnings features
   FINNHUB_API_KEY=your_key_here
 
+  # Required for macro features (yield curves, inflation, etc.)
+  FRED_API_KEY=your_key_here
+
   # Optional (for future use)
   # TRADIER_API_KEY=your_key_here
   # POLYGON_API_KEY=your_key_here
   ```
+
+  Get free keys:
+  - FINNHUB: https://finnhub.io/register
+  - FRED: https://fred.stlouisfed.org/docs/api/api_key.html
 
 - [ ] **Build Docker image**
   ```bash
@@ -203,17 +210,44 @@ for row in cursor.fetchall():
 
 ---
 
-## Scheduled Signal Generation
+## Scheduled Signal Generation (GitHub Actions)
 
-Signals are automatically generated daily via GitHub Actions:
-- **Schedule**: 6:30 AM ET (Mon-Fri, market days)
-- **What it does**: Runs `signal-all --record` and commits database
-- **Manual trigger**: Go to Actions tab → "Daily Signal Generation" → "Run workflow"
+### Automated Workflows
+
+**Daily Signal Generation** - Runs twice per trading day:
+- **6:30 AM ET** (Mon-Fri) - Pre-market signals using previous day's close
+- **5:00 PM ET** (Mon-Fri) - Post-market signals using same-day data
+- Skips US market holidays automatically
+- Commits predictions to `data/predictions.db`
+
+**Weekly Model Retrain** - Runs every Sunday:
+- **8:00 AM ET** (Sunday)
+- Checks for model drift using PSI (Population Stability Index)
+- Retrains models if PSI > 0.20 or no models exist
+- Fetches latest data and commits trained models
+
+### GitHub Secrets Setup (Required)
+
+Before workflows can run, add these secrets to your repository:
+
+```bash
+# From your terminal (requires gh CLI)
+gh secret set FINNHUB_API_KEY --body "your_finnhub_key"
+gh secret set FRED_API_KEY --body "your_fred_key"
+```
+
+Or manually:
+1. Go to repository → Settings → Secrets and variables → Actions
+2. Click "New repository secret"
+3. Add `FINNHUB_API_KEY` and `FRED_API_KEY`
+
+### Manual Trigger
+Go to Actions tab → Select workflow → "Run workflow"
 
 ### Check Action Status
 1. Go to repository → Actions tab
-2. View "Daily Signal Generation" workflow runs
-3. Check logs for any errors
+2. View workflow runs and logs
+3. Check for warnings or errors (especially FRED/model-related)
 
 ---
 
@@ -228,14 +262,20 @@ ls -la models/*.joblib
 docker-compose run --rm app python scripts/train_model.py train --ticker SPY
 ```
 
-### "FINNHUB_API_KEY not set" warning
+### "API KEY not set" warnings
 ```bash
-# Check .env file exists and has the key
-cat .env | grep FINNHUB
+# Check .env file has both keys
+cat .env | grep -E "FINNHUB|FRED"
 
-# Make sure docker-compose loads it
-docker-compose run --rm app env | grep FINNHUB
+# Make sure docker-compose loads them
+docker-compose run --rm app env | grep -E "FINNHUB|FRED"
+
+# Verify GitHub Actions secrets (if using workflows)
+gh secret list
 ```
+
+**FRED_API_KEY missing** = No macro features (yield curves, inflation)
+**FINNHUB_API_KEY missing** = No sentiment features
 
 ### Dashboard won't start
 ```bash
@@ -262,16 +302,18 @@ docker-compose run --rm app python scripts/fetch_data.py fetch-all --ticker SPY
 
 ## File Locations Reference
 
-| Purpose | Location |
-|---------|----------|
-| Price data (parquet) | `data/raw/` |
-| Feature data | `data/features/` |
-| Trained models | `models/` |
-| Predictions database | `data/predictions.db` |
-| MLflow experiments | `mlruns/` |
-| Logs | `logs/` |
-| Dashboard app | `dashboard/app.py` |
-| Config | `src/config/settings.py` |
+| Purpose | Location | Git Tracked? |
+|---------|----------|--------------|
+| Price data (parquet) | `data/raw/` | No (too large) |
+| Feature data | `data/features/` | No |
+| **Trained models** | `models/*.joblib` | **Yes** (committed by workflows) |
+| Predictions database | `data/predictions.db` | Yes (committed daily) |
+| MLflow experiments | `mlruns/` | No |
+| Logs | `logs/` | No |
+| Dashboard app | `dashboard/app.py` | Yes |
+| Config | `src/config/settings.py` | Yes |
+
+**Note**: Models (`*.joblib`, `*.json`) are now tracked in git so GitHub Actions workflows persist trained models automatically.
 
 ---
 
