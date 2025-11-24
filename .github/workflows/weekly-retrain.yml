@@ -110,8 +110,9 @@ jobs:
                   print(f'{ticker}: Error checking drift - {e}')
 
           if drift_detected:
-              print(f'DRIFT_DETECTED=true')
-              print(f'TICKERS_TO_RETRAIN={','.join(tickers_to_retrain)}')
+              print('DRIFT_DETECTED=true')
+              joined = ','.join(tickers_to_retrain)
+              print(f'TICKERS_TO_RETRAIN={joined}')
           else:
               print('DRIFT_DETECTED=false')
           "
