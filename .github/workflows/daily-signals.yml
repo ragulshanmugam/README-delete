@@ -68,7 +68,9 @@ jobs:
         if: steps.market-check.outcome == 'success'
         run: |
           echo "Fetching latest price data..."
-          python scripts/fetch_data.py main --tickers SPY,QQQ,IWM --with-features || true
+          python scripts/fetch_data.py main --tickers SPY --with-features || true
+          python scripts/fetch_data.py main --tickers QQQ --with-features || true
+          python scripts/fetch_data.py main --tickers IWM --with-features || true
 
       - name: Check if models exist
         if: steps.market-check.outcome == 'success'
