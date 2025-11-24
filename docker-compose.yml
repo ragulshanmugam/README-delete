@@ -1,0 +1,64 @@
+# ML Options Trading System - Docker Compose
+# For local development and testing
+
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ml-options-trader
+    volumes:
+      # Mount source code for development
+      - ./src:/app/src:ro
+      - ./scripts:/app/scripts:ro
+      # Persist data and models
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./models:/app/models
+      - ./mlruns:/app/mlruns
+      # Environment file
+      - ./.env:/app/.env:ro
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    working_dir: /app
+    # Default command - can be overridden
+    command: ["python", "-c", "print('ML Options Trading System ready')"]
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '1'
+          memory: 2G
+
+  # MLflow tracking server (optional, for experiment tracking)
+  mlflow:
+    image: python:3.11-slim
+    container_name: mlflow-server
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlruns:/mlruns
+    command: >
+      bash -c "pip install mlflow && mlflow server
+      --backend-store-uri /mlruns
+      --default-artifact-root /mlruns
+      --host 0.0.0.0
+      --port 5000"
+    profiles:
+      - mlflow  # Only start with: docker-compose --profile mlflow up
+
+# Named volumes for persistence (alternative to bind mounts)
+# volumes:
+#   data:
+#   logs:
+#   models:
+#   mlruns:

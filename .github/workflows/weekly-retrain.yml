@@ -1,0 +1,175 @@
+name: Weekly Model Retrain
+
+on:
+  # Run every Sunday at 8:00 AM ET (13:00 UTC)
+  schedule:
+    - cron: '0 13 * * 0'
+
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: 'Ticker to retrain (or ALL)'
+        required: false
+        default: 'ALL'
+      force:
+        description: 'Force retrain even without drift'
+        required: false
+        default: 'false'
+
+env:
+  FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+
+jobs:
+  check-drift-and-retrain:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Fetch latest data
+        run: |
+          echo "Fetching latest price data for all tickers..."
+          python scripts/fetch_data.py fetch-all --ticker SPY
+          python scripts/fetch_data.py fetch-all --ticker QQQ
+          python scripts/fetch_data.py fetch-all --ticker IWM
+
+      - name: Check for model drift
+        id: drift-check
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+
+          from pathlib import Path
+          import numpy as np
+          import pandas as pd
+          from datetime import datetime, timedelta
+
+          DRIFT_THRESHOLD = 0.20  # PSI threshold for retraining
+
+          def calculate_psi(expected, actual, bins=10):
+              breakpoints = np.percentile(expected, np.linspace(0, 100, bins + 1))
+              breakpoints[0] = -np.inf
+              breakpoints[-1] = np.inf
+              expected_freq = np.histogram(expected, breakpoints)[0] / len(expected)
+              actual_freq = np.histogram(actual, breakpoints)[0] / len(actual)
+              expected_freq = np.clip(expected_freq, 0.0001, 1)
+              actual_freq = np.clip(actual_freq, 0.0001, 1)
+              return np.sum((actual_freq - expected_freq) * np.log(actual_freq / expected_freq))
+
+          drift_detected = False
+          tickers_to_retrain = []
+
+          for ticker in ['SPY', 'QQQ', 'IWM']:
+              try:
+                  from src.models.feature_pipeline import FeaturePipeline
+                  pipeline = FeaturePipeline(ticker=ticker, include_macro=True)
+                  features_df, _, _ = pipeline.prepare_training_data()
+
+                  if len(features_df) < 100:
+                      continue
+
+                  split_idx = int(len(features_df) * 0.8)
+                  training = features_df.iloc[:split_idx]
+                  recent = features_df.iloc[split_idx:]
+
+                  # Check key features for drift
+                  key_features = ['returns_5d', 'rsi_14', 'hv_20', 'bb_width']
+                  max_psi = 0
+
+                  for col in key_features:
+                      if col in features_df.columns:
+                          train_vals = training[col].dropna().values
+                          recent_vals = recent[col].dropna().values
+                          if len(train_vals) > 10 and len(recent_vals) > 10:
+                              psi = calculate_psi(train_vals, recent_vals)
+                              max_psi = max(max_psi, psi)
+
+                  print(f'{ticker}: Max PSI = {max_psi:.3f}')
+
+                  if max_psi > DRIFT_THRESHOLD:
+                      drift_detected = True
+                      tickers_to_retrain.append(ticker)
+
+              except Exception as e:
+                  print(f'{ticker}: Error checking drift - {e}')
+
+          if drift_detected:
+              print(f'DRIFT_DETECTED=true')
+              print(f'TICKERS_TO_RETRAIN={','.join(tickers_to_retrain)}')
+          else:
+              print('DRIFT_DETECTED=false')
+          "
+
+      - name: Retrain models
+        if: github.event.inputs.force == 'true' || contains(steps.drift-check.outputs.*, 'DRIFT_DETECTED=true')
+        run: |
+          TICKER="${{ github.event.inputs.ticker || 'ALL' }}"
+
+          if [ "$TICKER" = "ALL" ]; then
+            TICKERS="SPY QQQ IWM"
+          else
+            TICKERS="$TICKER"
+          fi
+
+          for t in $TICKERS; do
+            echo "Retraining $t..."
+
+            # Direction classifier
+            python scripts/train_model.py train \
+              --ticker "$t" \
+              --sentiment \
+              --optimize-threshold \
+              --safe-features || true
+
+            # Volatility forecaster
+            python scripts/train_model.py train-volatility \
+              --ticker "$t" || true
+          done
+
+      - name: Commit model updates
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          # Add models and data
+          git add models/*.joblib || true
+          git add data/*.parquet || true
+
+          if git diff --staged --quiet; then
+            echo "No model changes to commit"
+          else
+            git commit -m "Weekly model retrain: $(date +%Y-%m-%d)
+
+            Automated model retraining via GitHub Actions.
+
+            Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+
+            git push
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Weekly Retrain Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date +%Y-%m-%d)" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Models" >> $GITHUB_STEP_SUMMARY
+          ls -la models/*.joblib 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "No models found" >> $GITHUB_STEP_SUMMARY
