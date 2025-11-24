@@ -1,9 +1,11 @@
 name: Daily Signal Generation
 
 on:
-  # Run at 6:30 AM ET (11:30 UTC) on weekdays
+  # Run at 6:30 AM ET (11:30 UTC) - pre-market signals
+  # Run at 5:00 PM ET (22:00 UTC) - post-market with full day data
   schedule:
     - cron: '30 11 * * 1-5'
+    - cron: '0 22 * * 1-5'
 
   # Allow manual trigger
   workflow_dispatch:

@@ -59,6 +59,8 @@ logs/*
 !logs/.gitkeep
 models/*
 !models/.gitkeep
+!models/*.joblib
+!models/*.json
 mlruns/
 
 # Environment
