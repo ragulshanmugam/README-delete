@@ -44,9 +44,7 @@ jobs:
       - name: Fetch latest data
         run: |
           echo "Fetching latest price data for all tickers..."
-          python scripts/fetch_data.py main --ticker SPY
-          python scripts/fetch_data.py main --ticker QQQ
-          python scripts/fetch_data.py main --ticker IWM
+          python scripts/fetch_data.py main --tickers SPY,QQQ,IWM --with-features
 
       - name: Check for model drift
         id: drift-check
